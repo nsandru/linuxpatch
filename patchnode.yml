@@ -51,6 +51,7 @@
       register: yum_result
       until: yum_result.finished
       retries: 30
+      delay: 300
 
     when: 
       - update_start|changed
