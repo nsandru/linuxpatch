@@ -41,7 +41,7 @@
 
     - name: Yum update
       command: /usr/bin/yum update -y
-      async: {{ yumtimeout|default(1200) }}
+      async: "{{ yumtimeout|default(1200) }}"
       poll: 0
       register: yum_sleeper
       tags: yumupdate
