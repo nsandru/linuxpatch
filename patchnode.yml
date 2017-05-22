@@ -1,0 +1,104 @@
+## Playbook for patching (updating) CentOS/RHEL hosts
+#
+# Variables:
+#
+# hostcluster: Name of host or hostgoroup to be updated (mandatory)
+# serial: Number of hosts to be updated in parallel (default 5)
+# service: Name of service to be stopped / started (mandatory)
+# update_start: If 'changed' run the the update process (mandatory)
+# dryrun: If true do a dry run
+# yumtimeout: Timeout for the yum update, default 1200s
+# 
+# patchnode-20170522
+#
+
+---
+
+- hosts: "{{ hostcluster|quote|mandatory }}"
+  gather_facts: False
+  serial: "{{ serial|default(5) }}"
+
+  tasks:
+  - block:
+    - name: Stop service {{ service }}
+      service:
+        name: "{{ service|mandatory }}"
+        state: "stopped"
+      tags: stopservice
+
+    - name: Wait for {{ service }} to stop
+      shell: CNT={{ timeout|default(300) }} ; while [ $CNT -gt 0 ] ; do service {{ service|mandatory }} status || { echo Stopped ; exit 0 ;} ; sleep 10 ; CNT=`expr $CNT - 10` ; done ; echo Running ; exit 0
+      register: service_status
+      tags: checkstopservice
+
+    - name: Service not stopped
+      pause: prompt="Please stop {{ service }} on {{ inventory_hostname }} then press Enter"
+      when: "'Running' in service_status.stdout"
+
+    - name: Yum clean all
+      shell: /usr/bin/yum clean all || /bin/true
+      tags: yumcleanup
+
+    - name: Yum update
+      command: /usr/bin/yum update -y
+      async: {{ yumtimeout|default(1200) }}
+      poll: 0
+      register: yum_sleeper
+      tags: yumupdate
+
+    - name: Yum - check task
+      async_status: jid={{ yum_sleeper.ansible_job_id }}
+      register: yum_result
+      until: yum_result.finished
+      retries: 30
+
+    when: 
+      - update_start|changed
+      - dryrun is undefined
+    become: true
+
+  - name: Checking if the kernel and system libraries have been updated
+    shell: KERNEL_NEW=$(rpm -q --last kernel | head -1 | awk '{print $1}' | sed 's/kernel-//'); KERNEL_NOW=$(uname -r);if [[ $KERNEL_NEW != $KERNEL_NOW ]];then echo "This server requires restart"; else echo "This Server does not need restart";fi
+    ignore_errors: true
+    register: reboot_required
+
+  - name: Next step restarts
+    pause:
+    when: ((reboot_required.stdout == "This server requires restart") or
+          (reboot_needed.stdout == "This server requires restart")) and
+          (dryrun is undefined)
+
+  - name: System Restart
+    command: shutdown -r +1 "Rebooting system after patching {{ inventory_hostname }}"
+    async: 0
+    poll: 0
+    when: reboot_required.stdout == "This server requires restart"
+    register: reboot_started
+    ignore_errors: true
+
+  - name: Pause to restart.
+    pause:
+      minutes: 2
+    when: reboot_started|changed
+
+  - name: Check if server is back online.
+    wait_for:
+      host: "{{ inventory_hostname }}"
+      port: 22
+      delay: 30
+      state: started
+    when: reboot_started|changed
+    register: restart_status
+    ignore_errors: true
+
+  - name: Start service
+    service:
+      name: "{{ service|mandatory }}"
+      state: "started"
+    when: reboot_started|changed
+
+  - name: Wait for service to start
+    shell: sleep {{ startwait|default(1) }} ; CNT={{ timeout|default(300) }} ; while [ $CNT -gt 0 ] ; do service {{ service|mandatory }} status && break ; sleep 10 ; CNT=`expr $CNT - 10` ; done ; exit 0
+    when: reboot_started|changed
+
+

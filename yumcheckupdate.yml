@@ -1,0 +1,39 @@
+## Check if there are updates in the yum repositories
+#
+# Variables:
+#
+# hostcluster: Name of host or hostgoroup to be updated (mandatory)
+#
+# yumcheckupdate-20170522
+#
+
+---
+
+- hosts: "{{ hostcluster|quote|mandatory }}"
+  gather_facts: False
+
+  tasks:
+  - name: Checking if new packages are available in the repository
+    shell: yum clean all;yum check-update;case $? in 0) echo "Update not required" ;; 100) echo "Update required" ;; *) echo "yum error";; esac  ;echo ok
+    register: update_required
+    args:
+      warn: false
+
+  - name: Checking if any of the updated packages will require a reboot
+    shell: if [[ $(yum check-update|grep -E '^(glib|initscripts|systemd|util-linux|selinux)') ]] ; then echo "This server requires restart"; else echo "This Server does not need restart";fi 
+    register: reboot_needed
+    args:
+      warn: false
+
+  - name: Yum error check
+    fail: msg="Yum failed, check repositories and configurations"
+    when: "'yum error' in update_required.stdout"
+
+  - name: Yum update required
+    shell: echo "{{ inventory_hostname }} has to be updated"
+    async: 0
+    poll: 0
+    when: "'Update required' in update_required.stdout"
+    register: update_start
+    ignore_errors: true
+

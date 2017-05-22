@@ -1,0 +1,8 @@
+## Run patching on all servers in parallel
+
+# - include: repos/repos.yml hostcluster={{ hostgroup }}
+- include: yumcheckupdate.yml hostcluster={{ hostgroup }}
+# - include: patchbackup/backup.yml hostcluster={{ hostgroup }}
+# - include: patchbackup/runbackup.yml hostcluster={{ hostgroup }}
+- include: patchnode.yml hostcluster={{ hostgroup }}
+
