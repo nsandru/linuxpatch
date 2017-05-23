@@ -3,20 +3,20 @@
 # Variables:
 #
 # hostcluster: Name of host or hostgoroup to be updated (mandatory)
-# serial: Number of hosts to be updated in parallel (default 5)
+# hostsparallel: Number of hosts to be updated in parallel (default 5)
 # service: Name of service to be stopped / started (mandatory)
 # update_start: If 'changed' run the the update process (mandatory)
 # dryrun: If true do a dry run
 # yumtimeout: Timeout for the yum update, default 1200s
 # 
-# patchnode-20170522
+# patchnode-20170523
 #
 
 ---
 
 - hosts: "{{ hostcluster|quote|mandatory }}"
   gather_facts: False
-  serial: "{{ serial|default(5) }}"
+  serial: "{{ hostsparallel|default(5) }}"
 
   tasks:
   - block:
@@ -26,32 +26,37 @@
         state: "stopped"
       tags: stopservice
 
-    - name: Wait for {{ service }} to stop
+    - name: Wait for service {{ service }} to stop
       shell: CNT={{ timeout|default(300) }} ; while [ $CNT -gt 0 ] ; do service {{ service|mandatory }} status || { echo Stopped ; exit 0 ;} ; sleep 10 ; CNT=`expr $CNT - 10` ; done ; echo Running ; exit 0
       register: service_status
       tags: checkstopservice
+      changed_when: service_status.stdout == "Running"
 
-    - name: Service not stopped
+    - name: Service {{ service }} not stopped
       pause: prompt="Please stop {{ service }} on {{ inventory_hostname }} then press Enter"
       when: "'Running' in service_status.stdout"
 
-    - name: Yum clean all
+    - name: Yum - clean all
       shell: /usr/bin/yum clean all || /bin/true
       tags: yumcleanup
 
-    - name: Yum update
-      command: /usr/bin/yum update -y
+    - name: Yum - update
+      yum: name=* state=latest
       async: "{{ yumtimeout|default(1200) }}"
       poll: 0
       register: yum_sleeper
       tags: yumupdate
 
-    - name: Yum - check task
+    - name: Yum - wait 1 minute
+      pause:
+        minutes: 1
+
+    - name: Yum - check whether task still running
       async_status: jid={{ yum_sleeper.ansible_job_id }}
       register: yum_result
       until: yum_result.finished
       retries: 30
-      delay: 300
+      delay: 30
 
     when: 
       - update_start|changed
@@ -59,9 +64,10 @@
     become: true
 
   - name: Checking if the kernel and system libraries have been updated
-    shell: KERNEL_NEW=$(rpm -q --last kernel | head -1 | awk '{print $1}' | sed 's/kernel-//'); KERNEL_NOW=$(uname -r);if [[ $KERNEL_NEW != $KERNEL_NOW ]];then echo "This server requires restart"; else echo "This Server does not need restart";fi
+    shell: KERNEL_NEW=$(rpm -q --last kernel | head -1 | awk '{print $1}' | sed 's/kernel-//'); KERNEL_NOW=$(uname -r);if [[ $KERNEL_NEW != $KERNEL_NOW ]];then echo "This server requires restart"; else echo "This Server does not need restart";fi;exit 0
     ignore_errors: true
     register: reboot_required
+    changed_when: reboot_required.stdout == "This server requires restart"
 
   - name: Next step restarts
     pause:
@@ -77,7 +83,7 @@
     register: reboot_started
     ignore_errors: true
 
-  - name: Pause to restart.
+  - name: Pause to restart
     pause:
       minutes: 2
     when: reboot_started|changed
@@ -92,14 +98,16 @@
     register: restart_status
     ignore_errors: true
 
-  - name: Start service
+  - name: Start {{ service }} service
     service:
       name: "{{ service|mandatory }}"
       state: "started"
     when: reboot_started|changed
 
-  - name: Wait for service to start
-    shell: sleep {{ startwait|default(1) }} ; CNT={{ timeout|default(300) }} ; while [ $CNT -gt 0 ] ; do service {{ service|mandatory }} status && break ; sleep 10 ; CNT=`expr $CNT - 10` ; done ; exit 0
+  - name: Wait for service {{ service }} to start
+    shell: sleep {{ startwait|default(1) }} ; CNT={{ timeout|default(300) }} ; while [ $CNT -gt 0 ] ; do service {{ service|mandatory }} status && { echo Running ; exit 0 ; } ; sleep 10 ; CNT=`expr $CNT - 10` ; done ; echo Stopped ; exit 0
+    ignore_errors: true
+    register: service_started
     when: reboot_started|changed
-
+    changed_when: service_started.stdout == "Stopped"
 

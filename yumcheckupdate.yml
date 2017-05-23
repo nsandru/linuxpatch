@@ -2,9 +2,9 @@
 #
 # Variables:
 #
-# hostcluster: Name of host or hostgoroup to be updated (mandatory)
+# hostcluster: Name of host or hostgroup to be updated (mandatory)
 #
-# yumcheckupdate-20170522
+# yumcheckupdate-20170523
 #
 
 ---
@@ -18,12 +18,14 @@
     register: update_required
     args:
       warn: false
+    changed_when: "'Update not required' not in update_required.stdout"
 
   - name: Checking if any of the updated packages will require a reboot
     shell: if [[ $(yum check-update|grep -E '^(glib|initscripts|systemd|util-linux|selinux)') ]] ; then echo "This server requires restart"; else echo "This Server does not need restart";fi 
     register: reboot_needed
     args:
       warn: false
+    changed_when: "'This Server does requires restart' in reboot_needed.stdout"
 
   - name: Yum error check
     fail: msg="Yum failed, check repositories and configurations"
