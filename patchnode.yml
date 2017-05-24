@@ -9,7 +9,7 @@
 # dryrun: If true do a dry run
 # yumtimeout: Timeout for the yum update, default 1200s
 # 
-# patchnode-20170523
+# patchnode-20170524
 #
 
 ---
@@ -27,7 +27,7 @@
       tags: stopservice
 
     - name: Wait for service {{ service }} to stop
-      shell: CNT={{ timeout|default(300) }} ; while [ $CNT -gt 0 ] ; do service {{ service|mandatory }} status || { echo Stopped ; exit 0 ;} ; sleep 10 ; CNT=`expr $CNT - 10` ; done ; echo Running ; exit 0
+      shell: CNT={{ timeout|default(300) }} ; while [ $CNT -gt 0 ] ; do service {{ service|mandatory }} status >/dev/null || { echo Stopped ; exit 0 ;} ; sleep 10 ; CNT=`expr $CNT - 10` ; done ; echo Running ; exit 0
       register: service_status
       tags: checkstopservice
       changed_when: service_status.stdout == "Running"
@@ -35,10 +35,6 @@
     - name: Service {{ service }} not stopped
       pause: prompt="Please stop {{ service }} on {{ inventory_hostname }} then press Enter"
       when: "'Running' in service_status.stdout"
-
-    - name: Yum - clean all
-      shell: /usr/bin/yum clean all || /bin/true
-      tags: yumcleanup
 
     - name: Yum - update
       yum: name=* state=latest
@@ -102,12 +98,15 @@
     service:
       name: "{{ service|mandatory }}"
       state: "started"
-    when: reboot_started|changed
+    tags: startservice
 
   - name: Wait for service {{ service }} to start
-    shell: sleep {{ startwait|default(1) }} ; CNT={{ timeout|default(300) }} ; while [ $CNT -gt 0 ] ; do service {{ service|mandatory }} status && { echo Running ; exit 0 ; } ; sleep 10 ; CNT=`expr $CNT - 10` ; done ; echo Stopped ; exit 0
+    shell: sleep {{ startwait|default(1) }} ; CNT={{ timeout|default(300) }} ; while [ $CNT -gt 0 ] ; do service {{ service|mandatory }} status >/dev/null && { echo Running ; exit 0 ; } ; sleep 10 ; CNT=`expr $CNT - 10` ; done ; echo Stopped ; exit 0
     ignore_errors: true
     register: service_started
-    when: reboot_started|changed
     changed_when: service_started.stdout == "Stopped"
+
+  - name: Service {{ service }} still stopped
+    pause: prompt="Please start {{ service }} on {{ inventory_hostname }} then press Enter"
+    when: service_started.stdout == "Stopped"
 
